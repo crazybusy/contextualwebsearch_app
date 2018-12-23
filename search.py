@@ -14,20 +14,31 @@ import requests
 import json
 
 from threading import Thread
+from threading import Lock
 
-class SafeDataModel:    
-    def __init__(self):
-        self.data = list()        
+MIN_SEARCH = 3
+AUTO_LIST = 3
+
+class SafeDataModel:
+    
+    def __init__(self, loaded_data = None):
+        self.data = list()
         self.displayed_view_index = 0
+        if loaded_data:
+            self.data.extend(loaded_data)  
 
     def add(self, one_data):
         self.data.append(one_data)
 
-    def last_retrieved(self):
+    def get_last_index(self):
         return len(self.data)
 
     def get_latest(self):
-        return self.data[-1]
+        if len(self.data) == 0:
+            return 0, []
+        else:
+            return len(self.data), self.data[-1]
+
 
     def set_displayed(self, displayed_view_index):
         self.displayed_view_index = displayed_view_index
@@ -51,20 +62,28 @@ class MainScreen(GridLayout):
         self.values = TreeView(root_options={
             'text': 'Suggestions'})
         self.add_widget(self.values)
+        self.lock = Lock()
 
         self.suggestions_list = SafeDataModel()
+        self.recent_list = list()
         
     def on_text(self, instance, value):                   
-        if value != "" and not value.isspace() and len(value) > 3:
+        if value != "" and not value.isspace() and len(value) > MIN_SEARCH:
             thread = Thread(target = self.get_suggestions_task)
             thread.start()
+        else:
+            self.refresh_widget_from_list(self.recent_list)
     
-    def refresh_widget_data(self):
-        if self.suggestions_list.last_retrieved() > self.suggestions_list.get_displayed():
-            data = self.suggestions_list.get_latest()
-            self.add_nkeys(self.values, data , 3)
-            self.suggestions_list.set_displayed(self.suggestions_list.last_retrieved())
+    def refresh_widget_from_model(self, model, force = False):
+        if (force and model.get_last_index()) or model.get_last_index() > model.get_displayed():
+            last_retrieved, data = model.get_latest()
+            self.add_nkeys(self.values, data , AUTO_LIST)
+            model.set_displayed(model.get_last_index())
             self.values.canvas.ask_update()
+    
+    def refresh_widget_from_list(self, strings):
+        self.add_nkeys(self.values, strings , AUTO_LIST)
+        self.values.canvas.ask_update()
 
     def get_suggestions_task(self):                
         url = "https://contextualwebsearch-websearch-v1.p.rapidapi.com/api/spelling/AutoComplete"
@@ -74,7 +93,7 @@ class MainScreen(GridLayout):
         if response.status_code == 200:
             data = json.loads(response.text)
             self.suggestions_list.add(data)
-            self.refresh_widget_data()
+            self.refresh_widget_from_model(self.suggestions_list)
             
 
     def suggestion_node_clicked(self, instance, value):
@@ -90,20 +109,23 @@ class MainScreen(GridLayout):
         if text != "" and not text.isspace():
             url = "https://contextualwebsearch.com/search/"+quote(text)
             webbrowser.open(url)
-    
+            self.recent_list.append(text)
+
     def add_nkeys(self, tree, data, n):
-        self.clear_tree(self.values)
-        count = 0 
+        self.lock.acquire()
+        self.clear_tree(self.values)        
+        
         for key in data:            
             node = TreeViewLabel(text=key)
             node.bind(on_touch_down=self.suggestion_node_clicked)
             self.values.add_node(node)           
             count = count + 1
-            if count > n:
-                break
+        self.lock.release()
 
-    def clear_tree(self, tree):
-        for node in tree.iterate_all_nodes():
+    def clear_tree(self, tree):        
+        #for node in tree.iterate_all_nodes():
+        #    tree.remove_node(node)
+        for node in tree.root.nodes:
             tree.remove_node(node)
 
 class SimpleKivy(App):
