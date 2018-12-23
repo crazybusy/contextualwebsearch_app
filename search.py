@@ -13,6 +13,28 @@ import webbrowser
 import requests
 import json
 
+from threading import Thread
+
+class SafeDataModel:    
+    def __init__(self):
+        self.data = list()        
+        self.displayed_view_index = 0
+
+    def add(self, one_data):
+        self.data.append(one_data)
+
+    def last_retrieved(self):
+        return len(self.data)
+
+    def get_latest(self):
+        return self.data[-1]
+
+    def set_displayed(self, displayed_view_index):
+        self.displayed_view_index = displayed_view_index
+
+    def get_displayed(self):
+        return self.displayed_view_index
+
 class MainScreen(GridLayout):
 
     def __init__(self, **kwargs):
@@ -28,18 +50,32 @@ class MainScreen(GridLayout):
         self.add_widget(button)
         self.values = TreeView(root_options={
             'text': 'Suggestions'})
-        self.add_widget(self.values)        
+        self.add_widget(self.values)
+
+        self.suggestions_list = SafeDataModel()
         
-    def on_text(self, instance, value):
-        self.clear_tree(self.values)                 
+    def on_text(self, instance, value):                   
         if value != "" and not value.isspace() and len(value) > 3:
-            url = "https://contextualwebsearch-websearch-v1.p.rapidapi.com/api/spelling/AutoComplete"
-            params = {'text': value}
-            headers = {"X-RapidAPI-Key": "5b7ec33f4dmsh08ea9efedd164b7p1392d6jsn645e17978f7f"}
-            response = requests.get(url, params = params, headers = headers)
-            if response.status_code == 200:
-                data = json.loads(response.text)
-                self.add_nkeys(self.values, data , 3)
+            thread = Thread(target = self.get_suggestions_task)
+            thread.start()
+    
+    def refresh_widget_data(self):
+        if self.suggestions_list.last_retrieved() > self.suggestions_list.get_displayed():
+            data = self.suggestions_list.get_latest()
+            self.add_nkeys(self.values, data , 3)
+            self.suggestions_list.set_displayed(self.suggestions_list.last_retrieved())
+            self.values.canvas.ask_update()
+
+    def get_suggestions_task(self):                
+        url = "https://contextualwebsearch-websearch-v1.p.rapidapi.com/api/spelling/AutoComplete"
+        params = {'text': self.tfa.text}
+        headers = {"X-RapidAPI-Key": "5b7ec33f4dmsh08ea9efedd164b7p1392d6jsn645e17978f7f"}
+        response = requests.get(url, params = params, headers = headers)
+        if response.status_code == 200:
+            data = json.loads(response.text)
+            self.suggestions_list.add(data)
+            self.refresh_widget_data()
+            
 
     def suggestion_node_clicked(self, instance, value):
         self.tfa.text = instance.text        
@@ -56,6 +92,7 @@ class MainScreen(GridLayout):
             webbrowser.open(url)
     
     def add_nkeys(self, tree, data, n):
+        self.clear_tree(self.values)
         count = 0 
         for key in data:            
             node = TreeViewLabel(text=key)
